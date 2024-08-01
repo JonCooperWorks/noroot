@@ -27,5 +27,4 @@ Simply run `go run noroot.go`
 
 You can specify a different SSH public key file, username, and output file path using the -keyfile, -username, and -output flags:
 
- `./noroot -keyfile /path/to/your/id_rsa.pub -username yourusername -output /path/to/output/cloud-init.yml
-`
+ `./noroot -keyfile /path/to/your/id_rsa.pub -username yourusername -output /path/to/output/cloud-init.yml`
