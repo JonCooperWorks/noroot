@@ -20,12 +20,12 @@ The cloud-init configuration does the following:
 
 - Go (https://golang.org/doc/install)
 
-### Generating `cloud-init.yaml`
+### Generating `cloud-init.yml`
 
-The repository includes a Go program, `noroot.go`, which generates the `cloud-init.yaml` file with your SSH key.
+The repository includes a Go program, `noroot.go`, which generates the `cloud-init.yml` file with your SSH key.
 Simply run `go run noroot.go`
 
 You can specify a different SSH public key file, username, and output file path using the -keyfile, -username, and -output flags:
 
- `./noroot -keyfile /path/to/your/id_rsa.pub -username yourusername -output /path/to/output/cloud-init.yaml
+ `./noroot -keyfile /path/to/your/id_rsa.pub -username yourusername -output /path/to/output/cloud-init.yml
 `
