@@ -3,9 +3,15 @@ package main
 import (
 	"bufio"
 	"flag"
-	"fmt"
-	"io/ioutil"
+    "fmt"
+    "log"
 	"os"
+	"regexp"
+	"strings"
+	"text/template"
+
+	"golang.org/x/crypto/ssh"
+	"gopkg.in/yaml.v2"
 )
 
 const cloudInitTemplate = `#cloud-config
@@ -18,11 +24,11 @@ packages:
   - auditd
 
 users:
-  - name: %s
+  - name: {{.Username}}
     sudo: ['ALL=(ALL) NOPASSWD:ALL']
     shell: /bin/bash
     ssh-authorized-keys:
-      - %s
+      - {{.SSHKey}}
 
 ssh_pwauth: false
 
@@ -30,7 +36,7 @@ disable_root: true
 
 chpasswd:
   list: |
-     %s:password
+     {{.Username}}:password
   expire: false
 
 runcmd:
@@ -41,13 +47,18 @@ runcmd:
   - dpkg-reconfigure -plow unattended-upgrades
   - systemctl enable auditd
   - systemctl start auditd
-  - mkdir -p /home/%s/.ssh
-  - echo '%s' > /home/%s/.ssh/authorized_keys
-  - chown -R %s:%s /home/%s/.ssh
-  - chmod 600 /home/%s/.ssh/authorized_keys
+  - mkdir -p /home/{{.Username}}/.ssh
+  - echo '{{.SSHKey}}' > /home/{{.Username}}/.ssh/authorized_keys
+  - chown -R {{.Username}}:{{.Username}} /home/{{.Username}}/.ssh
+  - chmod 600 /home/{{.Username}}/.ssh/authorized_keys
 
 final_message: "The system is finally up, after $UPTIME seconds"
 `
+
+type CloudInitData struct {
+	Username string
+	SSHKey   string
+}
 
 func main() {
 	// Parse command line arguments
@@ -56,26 +67,48 @@ func main() {
 	username := flag.String("username", "topman", "Username for the new user")
 	flag.Parse()
 
-	// Read the SSH key from the specified file
+	// Validate the username
+	if !isValidUsername(*username) {
+		log.Fatalf("Invalid username: %s. Must be 1-32 characters long and contain only lowercase letters, numbers, and underscores.\n", *username)
+	}
+
+	// Read and validate the SSH key from the specified file
 	key, err := readSSHKey(*keyFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading SSH key: %v\n", err)
-		os.Exit(1)
+		log.Fatalf("Error reading SSH key: %v\n", err)
 	}
 
-	// Generate the cloud-init YAML content
-	yamlContent := fmt.Sprintf(cloudInitTemplate, *username, key, *username, *username, key, *username, *username, *username, *username, *username)
+	// Prepare data for the template
+	data := CloudInitData{
+		Username: *username,
+		SSHKey:   key,
+	}
+
+	// Generate the cloud-init YAML content using the template
+	tmpl, err := template.New("cloudInit").Parse(cloudInitTemplate)
+	if err != nil {
+		log.Fatalf("Error parsing template: %v\n", err)
+	}
+
+	var yamlContent strings.Builder
+	if err := tmpl.Execute(&yamlContent, data); err != nil {
+		log.Fatalf("Error executing template: %v\n", err)
+	}
+
+	// Validate the YAML content
+	if !isValidYAML(yamlContent.String()) {
+		log.Fatalf("Generated YAML content is invalid\n")
+	}
 
 	// Write the YAML content to the output file
-	if err := ioutil.WriteFile(*outputFile, []byte(yamlContent), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing YAML file: %v\n", err)
-		os.Exit(1)
+	if err := os.WriteFile(*outputFile, []byte(yamlContent.String()), 0644); err != nil {
+		log.Fatalf("Error writing YAML file: %v\n", err)
 	}
 
-	fmt.Printf("Successfully wrote cloud-init config to %s\n", *outputFile)
+	log.Printf("Successfully wrote cloud-init config to %s\n", *outputFile)
 }
 
-// readSSHKey reads the SSH key from the given file path
+// readSSHKey reads the SSH key from the given file path and validates its structure
 func readSSHKey(filePath string) (string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -85,11 +118,28 @@ func readSSHKey(filePath string) (string, error) {
 
 	scanner := bufio.NewScanner(file)
 	if scanner.Scan() {
-		return scanner.Text(), nil
+		key := scanner.Text()
+		_, _, _, _, err := ssh.ParseAuthorizedKey([]byte(key))
+		if err != nil {
+			return "", fmt.Errorf("invalid SSH key format: %v", err)
+		}
+		return key, nil
 	}
 	if err := scanner.Err(); err != nil {
 		return "", err
 	}
 
 	return "", fmt.Errorf("no SSH key found in file %s", filePath)
+}
+
+// isValidUsername validates the username
+func isValidUsername(username string) bool {
+	validUsername := regexp.MustCompile(`^[a-z0-9_]{1,32}$`)
+	return validUsername.MatchString(username)
+}
+
+// isValidYAML validates the YAML content
+func isValidYAML(content string) bool {
+	var out map[string]interface{}
+	return yaml.Unmarshal([]byte(content), &out) == nil
 }
