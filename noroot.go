@@ -146,5 +146,13 @@ func isValidUsername(username string) bool {
 // isValidYAML validates the YAML content
 func isValidYAML(content string) bool {
 	var out map[string]interface{}
-	return strings.HasPrefix(content, "#cloud-config\n") && yaml.Unmarshal([]byte(content), &out) == nil
+	return getFirstLine(content) == "#cloud-config" && yaml.Unmarshal([]byte(content), &out) == nil
+}
+
+func getFirstLine(input string) string {
+	scanner := bufio.NewScanner(strings.NewReader(input))
+	if scanner.Scan() {
+		return scanner.Text()
+	}
+	return ""
 }
