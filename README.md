@@ -1,7 +1,8 @@
 # noroot
 
 ## Overview
-This repository contains a `cloud-init.yaml` file and a Go program to set up VPS hosts with some basic hardening measures.
+This repository contains a Go program to set up my VPS hosts with some basic hardening measures.
+I'm open sourcing it in case someone else could find this useful.
 The cloud-init configuration does the following:
 
 - Disables root SSH login
