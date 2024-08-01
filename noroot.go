@@ -114,7 +114,12 @@ func readSSHKey(filePath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
+	defer func(file *os.File) {
+        err := file.Close()
+        if err != nil {
+            log.Fatalf("Error closing SSH key: %v", err)
+        }
+    }(file)
 
 	scanner := bufio.NewScanner(file)
 	if scanner.Scan() {
