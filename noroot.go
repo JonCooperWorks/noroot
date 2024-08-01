@@ -9,6 +9,14 @@ import (
 )
 
 const cloudInitTemplate = `#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - fail2ban
+  - ntp
+  - unattended-upgrades
+  - auditd
+
 users:
   - name: %s
     sudo: ['ALL=(ALL) NOPASSWD:ALL']
@@ -26,6 +34,13 @@ chpasswd:
   expire: false
 
 runcmd:
+  - systemctl enable fail2ban
+  - systemctl start fail2ban
+  - systemctl enable ntp
+  - systemctl start ntp
+  - dpkg-reconfigure -plow unattended-upgrades
+  - systemctl enable auditd
+  - systemctl start auditd
   - mkdir -p /home/%s/.ssh
   - echo '%s' > /home/%s/.ssh/authorized_keys
   - chown -R %s:%s /home/%s/.ssh

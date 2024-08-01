@@ -8,6 +8,11 @@ The cloud-init configuration does the following:
 - Disables root SSH login
 - Creates a new user with sudo privileges
 - Adds your SSH key to the new user
+- Updates and upgrades the system packages
+- Installs and configures Fail2Ban to protect against brute force attacks
+- Sets up NTP to synchronize the system clock
+- Configures unattended upgrades for automatic security updates
+- Installs and configures audit logging with auditd
 
 ## Usage
 
