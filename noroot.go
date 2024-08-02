@@ -52,7 +52,7 @@ runcmd:
   - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
   - add-apt-repository "deb [arch=arm64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
   - apt-get update
-  - apt-get install -y docker.io docker-compose
+  - apt-get install -y docker.io docker-compose-plugin
   - gpasswd -a {{.DockerUsername}} docker
   - systemctl enable fail2ban
   - systemctl start fail2ban
