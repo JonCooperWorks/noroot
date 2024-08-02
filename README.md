@@ -13,6 +13,7 @@ The cloud-init configuration does the following:
 - Sets up NTP to synchronize the system clock
 - Configures unattended upgrades for automatic security updates
 - Installs and configures audit logging with auditd
+- Installs Docker and docker-compose
 
 ## Usage
 
