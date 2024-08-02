@@ -29,3 +29,9 @@ Simply run `go run noroot.go`
 You can specify a different SSH public key file, username, and output file path using the -keyfile, -username, and -output flags:
 
  `./noroot -keyfile /path/to/your/id_rsa.pub -username yourusername -output /path/to/output/cloud-init.yml`
+
+### Security Model
+
+The security model restricts SSH access exclusively to the admin user using SSH key authentication, while the Docker user cannot access SSH and lacks sudo privileges.
+This ensures only the admin can manage the server and switch to the Docker user for container operations.
+Additional controls include `fail2ban` to protect against brute force attacks, `auditd` for detailed logging of system activities, and `unattended-upgrades` to automatically apply security updates.
