@@ -2,95 +2,41 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"flag"
 	"log"
 	"os"
 	"regexp"
 	"strings"
-	"text/template"
+	"time"
 
+	"github.com/joncooperworks/noroot/cloudinit"
+	"github.com/joncooperworks/noroot/driver"
+	"github.com/joncooperworks/noroot/driver/hetzner"
 	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v2"
 )
 
-const cloudInitTemplate = `#cloud-config
-package_update: true
-package_upgrade: true
-packages:
-  - fail2ban
-  - ntp
-  - unattended-upgrades
-  - auditd
-  - apt-transport-https
-  - ca-certificates
-  - curl
-  - software-properties-common
-
-users:
-  - name: {{.AdminUsername}}
-    sudo: ['ALL=(ALL) NOPASSWD:ALL']
-    shell: /bin/bash
-    ssh-authorized-keys:
-{{range .AdminSSHKeys}}      - {{.}}
-{{end}}
-  - name: {{.DockerUsername}}
-    groups: docker
-    shell: /bin/bash
-    ssh_pwauth: false
-    lock_passwd: true
-
-ssh_pwauth: false
-
-disable_root: true
-
-chpasswd:
-  list: |
-     {{.AdminUsername}}:password
-  expire: false
-
-runcmd:
-  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
-  - add-apt-repository "deb [arch=arm64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
-  - apt-get update
-  - apt-get install -y docker.io docker-compose-plugin
-  - gpasswd -a {{.DockerUsername}} docker
-  - systemctl enable fail2ban
-  - systemctl start fail2ban
-  - systemctl enable ntp
-  - systemctl start ntp
-  - dpkg-reconfigure -plow unattended-upgrades
-  - systemctl enable auditd
-  - systemctl start auditd
-  - mkdir -p /home/{{.AdminUsername}}/.ssh
-{{range .AdminSSHKeys}}  - echo '{{.}}' >> /home/{{$.AdminUsername}}/.ssh/authorized_keys
-{{end}}  - chown -R {{.AdminUsername}}:{{.AdminUsername}} /home/{{.AdminUsername}}/.ssh
-  - chmod 600 /home/{{.AdminUsername}}/.ssh/authorized_keys
-  - mkdir -p /home/{{.DockerUsername}}/.ssh
-  - chown -R {{.DockerUsername}}:{{.DockerUsername}} /home/{{.DockerUsername}}/.ssh
-  - chmod 700 /home/{{.DockerUsername}}/.ssh
-  - touch /home/{{.DockerUsername}}/.hushlogin
-  - systemctl enable docker
-  - reboot
-
-final_message: "The system is finally up, after $UPTIME seconds"
-`
-
-type CloudInitData struct {
-	AdminUsername  string
-	AdminSSHKeys   []string
-	DockerUsername string
-}
-
 func main() {
-	// Parse command line arguments
-	adminKeyFile := flag.String("adminkeyfile", os.Getenv("HOME")+"/.ssh/id_rsa.pub", "Path to the admin SSH public key file")
+	// Cloud-init generation flags
+	adminKeyFile := flag.String("adminkeyfile", os.Getenv("HOME")+"/.ssh/id_ecdsa.pub", "Path to the admin SSH public key file")
 	outputFile := flag.String("output", "cloud-init.yml", "Path to the output YAML file")
 	adminUsername := flag.String("adminusername", "topman", "Username for the admin user")
 	dockerUsername := flag.String("dockerusername", "dockeruser", "Username for the docker user")
+	distro := flag.String("distro", cloudinit.DistroUbuntu, "Distro for cloud-init: ubuntu, fedora")
+
+	// Optional: create server via cloud driver
+	driverName := flag.String("driver", "", "Cloud driver to use when creating a server (e.g. hetzner). If empty, only generates cloud-init.")
+	token := flag.String("token", os.Getenv("HETZNER_TOKEN"), "API token for the cloud driver (e.g. HETZNER_TOKEN)")
+	serverName := flag.String("name", "noroot-server", "Server name when using -driver")
+	image := flag.String("image", "ubuntu-24.04", "OS image (e.g. ubuntu-24.04, fedora-41)")
+	serverType := flag.String("type", "cpx11", "Server type (e.g. cpx11, cax11)")
+	location := flag.String("location", "hel1", "Location/datacenter (e.g. hel1, fsn1)")
+
 	flag.Parse()
 
-	// Validate the usernames
+	// Validate usernames
 	if !isValidUsername(*adminUsername) {
 		log.Fatalf("Invalid admin username: %s. Must be 1-32 characters long and contain only lowercase letters, numbers, and underscores.\n", *adminUsername)
 	}
@@ -98,46 +44,70 @@ func main() {
 		log.Fatalf("Invalid docker username: %s. Must be 1-32 characters long and contain only lowercase letters, numbers, and underscores.\n", *dockerUsername)
 	}
 
-	// Read and validate the SSH keys from the specified file
+	// Read SSH keys
 	adminKeys, err := readSSHKeys(*adminKeyFile)
 	if err != nil {
 		log.Fatalf("Error reading admin SSH keys: %v\n", err)
 	}
 
-	// Prepare data for the template
-	data := CloudInitData{
+	data := cloudinit.Data{
 		AdminUsername:  *adminUsername,
 		AdminSSHKeys:   adminKeys,
 		DockerUsername: *dockerUsername,
 	}
 
-	// Generate the cloud-init YAML content using the template
-	tmpl, err := template.New("cloudInit").Parse(cloudInitTemplate)
+	// Generate cloud-init YAML
+	yamlContent, err := cloudinit.Render(data, *distro)
 	if err != nil {
-		log.Fatalf("Error parsing template: %v\n", err)
+		log.Fatalf("Error generating cloud-init: %v\n", err)
 	}
 
-	var yamlContent strings.Builder
-	if err := tmpl.Execute(&yamlContent, data); err != nil {
-		log.Fatalf("Error executing template: %v\n", err)
-	}
-
-	// Validate the YAML content
+	// Validate YAML
 	var out map[string]interface{}
-	err = yaml.Unmarshal([]byte(yamlContent.String()), &out)
-	if err != nil {
-		log.Printf("Generated YAML content is invalid: %v\n", err)
+	if err := yaml.Unmarshal([]byte(yamlContent), &out); err != nil {
+		log.Printf("Generated YAML validation warning: %v\n", err)
 	}
 
-	// Write the YAML content to the output file
-	if err := os.WriteFile(*outputFile, []byte(yamlContent.String()), 0644); err != nil {
-		log.Fatalf("Error writing YAML file: %v\n", err)
+	// Write cloud-init to file
+	if err := os.WriteFile(*outputFile, []byte(yamlContent), 0644); err != nil {
+		log.Fatalf("Error writing cloud-init file: %v\n", err)
 	}
+	log.Printf("Wrote cloud-init config to %s (distro=%s)\n", *outputFile, *distro)
 
-	log.Printf("Successfully wrote cloud-init config to %s\n", *outputFile)
+	// Optionally create server via driver
+	if *driverName != "" {
+		var drv driver.Driver
+		switch *driverName {
+		case "hetzner":
+			if *token == "" {
+				log.Fatal("Hetzner driver requires -token or HETZNER_TOKEN environment variable")
+			}
+			drv = hetzner.New(*token)
+		default:
+			log.Fatalf("Unknown driver %q. Supported: hetzner\n", *driverName)
+		}
+
+		opts := driver.CreateOptions{
+			Name:       *serverName,
+			Image:      *image,
+			ServerType: *serverType,
+			Location:   *location,
+			UserData:   yamlContent,
+			SSHKeys:    adminKeys,
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+
+		server, err := drv.Create(ctx, opts)
+		if err != nil {
+			log.Fatalf("Error creating server: %v\n", err)
+		}
+		log.Printf("Created server: id=%s name=%s public_ip=%s status=%s\n",
+			server.ID, server.Name, server.PublicIP, server.Status)
+	}
 }
 
-// readSSHKeys reads all SSH keys from the given file path (one per line) and validates each
 func readSSHKeys(filePath string) ([]string, error) {
 	fileContent, err := os.ReadFile(filePath)
 	if err != nil {
@@ -160,13 +130,11 @@ func readSSHKeys(filePath string) ([]string, error) {
 	return keys, nil
 }
 
-// isValidUsername validates the username
 func isValidUsername(username string) bool {
 	validUsername := regexp.MustCompile(`^[a-z0-9_]{1,32}$`)
 	return validUsername.MatchString(username)
 }
 
-// isValidSSHKey validates the SSH key
 func isValidSSHKey(key string) bool {
 	_, _, _, _, err := ssh.ParseAuthorizedKey([]byte(key))
 	return err == nil
