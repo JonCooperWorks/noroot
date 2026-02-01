@@ -32,7 +32,8 @@ users:
     sudo: ['ALL=(ALL) NOPASSWD:ALL']
     shell: /bin/bash
     ssh-authorized-keys:
-      - {{.AdminSSHKey}}
+{{range .AdminSSHKeys}}      - {{.}}
+{{end}}
   - name: {{.DockerUsername}}
     groups: docker
     shell: /bin/bash
@@ -52,7 +53,7 @@ runcmd:
   - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
   - add-apt-repository "deb [arch=arm64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
   - apt-get update
-  - apt-get install -y docker.io docker-compose
+  - apt-get install -y docker.io docker-compose-plugin
   - gpasswd -a {{.DockerUsername}} docker
   - systemctl enable fail2ban
   - systemctl start fail2ban
@@ -62,8 +63,8 @@ runcmd:
   - systemctl enable auditd
   - systemctl start auditd
   - mkdir -p /home/{{.AdminUsername}}/.ssh
-  - echo '{{.AdminSSHKey}}' > /home/{{.AdminUsername}}/.ssh/authorized_keys
-  - chown -R {{.AdminUsername}}:{{.AdminUsername}} /home/{{.AdminUsername}}/.ssh
+{{range .AdminSSHKeys}}  - echo '{{.}}' >> /home/{{$.AdminUsername}}/.ssh/authorized_keys
+{{end}}  - chown -R {{.AdminUsername}}:{{.AdminUsername}} /home/{{.AdminUsername}}/.ssh
   - chmod 600 /home/{{.AdminUsername}}/.ssh/authorized_keys
   - mkdir -p /home/{{.DockerUsername}}/.ssh
   - chown -R {{.DockerUsername}}:{{.DockerUsername}} /home/{{.DockerUsername}}/.ssh
@@ -77,7 +78,7 @@ final_message: "The system is finally up, after $UPTIME seconds"
 
 type CloudInitData struct {
 	AdminUsername  string
-	AdminSSHKey    string
+	AdminSSHKeys   []string
 	DockerUsername string
 }
 
@@ -97,16 +98,16 @@ func main() {
 		log.Fatalf("Invalid docker username: %s. Must be 1-32 characters long and contain only lowercase letters, numbers, and underscores.\n", *dockerUsername)
 	}
 
-	// Read and validate the SSH keys from the specified files
-	adminKey, err := readSSHKey(*adminKeyFile)
+	// Read and validate the SSH keys from the specified file
+	adminKeys, err := readSSHKeys(*adminKeyFile)
 	if err != nil {
-		log.Fatalf("Error reading admin SSH key: %v\n", err)
+		log.Fatalf("Error reading admin SSH keys: %v\n", err)
 	}
 
 	// Prepare data for the template
 	data := CloudInitData{
 		AdminUsername:  *adminUsername,
-		AdminSSHKey:    adminKey,
+		AdminSSHKeys:   adminKeys,
 		DockerUsername: *dockerUsername,
 	}
 
@@ -136,26 +137,27 @@ func main() {
 	log.Printf("Successfully wrote cloud-init config to %s\n", *outputFile)
 }
 
-// readSSHKey reads the SSH key from the given file path and validates its structure
-func readSSHKey(filePath string) (string, error) {
+// readSSHKeys reads all SSH keys from the given file path (one per line) and validates each
+func readSSHKeys(filePath string) ([]string, error) {
 	fileContent, err := os.ReadFile(filePath)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	key := getFirstLine(string(fileContent))
-	if !isValidSSHKey(key) {
-		return "", errors.New("invalid SSH key format")
+	var keys []string
+	scanner := bufio.NewScanner(strings.NewReader(string(fileContent)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		if isValidSSHKey(line) {
+			keys = append(keys, line)
+		}
 	}
-	return key, nil
-}
-
-// getFirstLine returns the first line of the given string.
-func getFirstLine(input string) string {
-	scanner := bufio.NewScanner(strings.NewReader(input))
-	if scanner.Scan() {
-		return scanner.Text()
+	if len(keys) == 0 {
+		return nil, errors.New("no valid SSH keys found in file")
 	}
-	return ""
+	return keys, nil
 }
 
 // isValidUsername validates the username
