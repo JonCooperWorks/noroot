@@ -28,13 +28,18 @@ func main() {
 
 	// Optional: create server via cloud driver
 	driverName := flag.String("driver", "", "Cloud driver to use when creating a server (e.g. hetzner). If empty, only generates cloud-init.")
-	token := flag.String("token", os.Getenv("HETZNER_TOKEN"), "API token for the cloud driver (e.g. HETZNER_TOKEN)")
+	token := flag.String("token", "", "API token for the cloud driver (defaults to HETZNER_TOKEN env var)")
 	serverName := flag.String("name", "noroot-server", "Server name when using -driver")
 	image := flag.String("image", "ubuntu-24.04", "OS image (e.g. ubuntu-24.04, fedora-41)")
 	serverType := flag.String("type", "cpx11", "Server type (e.g. cpx11, cax11)")
 	location := flag.String("location", "hel1", "Location/datacenter (e.g. hel1, fsn1)")
 
 	flag.Parse()
+
+	// Fall back to environment variable if token not provided via flag
+	if *token == "" {
+		*token = os.Getenv("HETZNER_TOKEN")
+	}
 
 	// Validate usernames
 	if !isValidUsername(*adminUsername) {
