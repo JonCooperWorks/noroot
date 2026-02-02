@@ -14,36 +14,31 @@ import (
 	"github.com/joncooperworks/noroot/cloudinit"
 	"github.com/joncooperworks/noroot/driver"
 	"github.com/joncooperworks/noroot/driver/hetzner"
+	"github.com/joho/godotenv"
 	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v2"
 )
 
 func main() {
+	// Load .env from current directory (no-op if missing)
+	_ = godotenv.Load()
+
 	// Cloud-init generation flags
-	adminKeyFile := flag.String("adminkeyfile", os.Getenv("HOME")+"/.ssh/id_ecdsa.pub", "Path to the admin SSH public key file")
+	adminKeyFile := flag.String("adminkeyfile", os.Getenv("HOME")+"/.ssh/id_rsa.pub", "Path to the admin SSH public key file")
 	outputFile := flag.String("output", "cloud-init.yml", "Path to the output YAML file")
 	adminUsername := flag.String("adminusername", "topman", "Username for the admin user")
 	dockerUsername := flag.String("dockerusername", "dockeruser", "Username for the docker user")
-	distro := flag.String("distro", cloudinit.DistroUbuntu, "Distro for cloud-init: ubuntu, fedora")
+	osImage := flag.String("os", cloudinit.OSUbuntu, "OS image for cloud-init (e.g. ubuntu)")
 
 	// Optional: create server via cloud driver
 	driverName := flag.String("driver", "", "Cloud driver to use when creating a server (e.g. hetzner). If empty, only generates cloud-init.")
-	var token string
-	flag.Func("token", "API token for the cloud driver (defaults to HETZNER_TOKEN env var)", func(s string) error {
-		token = s
-		return nil
-	})
+	token := flag.String("token", os.Getenv("HETZNER_TOKEN"), "API token for the cloud driver (e.g. HETZNER_TOKEN)")
 	serverName := flag.String("name", "noroot-server", "Server name when using -driver")
 	image := flag.String("image", "ubuntu-24.04", "OS image (e.g. ubuntu-24.04, fedora-41)")
 	serverType := flag.String("type", "cpx11", "Server type (e.g. cpx11, cax11)")
 	location := flag.String("location", "hel1", "Location/datacenter (e.g. hel1, fsn1)")
 
 	flag.Parse()
-
-	// Fall back to environment variable if token not provided via flag
-	if token == "" {
-		token = os.Getenv("HETZNER_TOKEN")
-	}
 
 	// Validate usernames
 	if !isValidUsername(*adminUsername) {
@@ -65,8 +60,12 @@ func main() {
 		DockerUsername: *dockerUsername,
 	}
 
-	// Generate cloud-init YAML
-	yamlContent, err := cloudinit.Render(data, *distro)
+	// Generate cloud-init YAML from OS image
+	img, err := cloudinit.OSImageByName(*osImage)
+	if err != nil {
+		log.Fatalf("Error: %v\n", err)
+	}
+	yamlContent, err := img.CloudInit(data)
 	if err != nil {
 		log.Fatalf("Error generating cloud-init: %v\n", err)
 	}
@@ -81,17 +80,17 @@ func main() {
 	if err := os.WriteFile(*outputFile, []byte(yamlContent), 0644); err != nil {
 		log.Fatalf("Error writing cloud-init file: %v\n", err)
 	}
-	log.Printf("Wrote cloud-init config to %s (distro=%s)\n", *outputFile, *distro)
+	log.Printf("Wrote cloud-init config to %s (os=%s)\n", *outputFile, *osImage)
 
 	// Optionally create server via driver
 	if *driverName != "" {
 		var drv driver.Driver
 		switch *driverName {
 		case "hetzner":
-			if token == "" {
+			if *token == "" {
 				log.Fatal("Hetzner driver requires -token or HETZNER_TOKEN environment variable")
 			}
-			drv = hetzner.New(token)
+			drv = hetzner.New(*token)
 		default:
 			log.Fatalf("Unknown driver %q. Supported: hetzner\n", *driverName)
 		}
